@@ -1,488 +1,300 @@
-#!/usr/bin/env python3
 """
-API FastAPI pour AN-droid
-Endpoints principaux pour l'app Android
+Point d'entrée principal modernisé pour RobianAPI
+Intégration de tous les services : Cache Redis, WebSockets, PostgreSQL
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
-from fastapi.responses import StreamingResponse, FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
-from datetime import datetime, date
-import os
-import json
 import asyncio
-from pathlib import Path
+from contextlib import asynccontextmanager
+from typing import Dict, Any
+from datetime import datetime
 
-# Import des scripts locaux
-import sys
-sys.path.append('./scripts')
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
+import structlog
 
-try:
-    from extract_audio import AudioExtractor
-    from explore_site import ANSiteExplorer
-except ImportError:
-    print("⚠️ Scripts d'extraction non trouvés - fonctionnalités limitées")
-    AudioExtractor = None
-    ANSiteExplorer = None
+from .config import settings, get_platform_info
+from .middleware import setup_middleware, global_exception_handler
+from .models import init_database, close_database, DatabaseHealthCheck
+from .services.cache_service import cache_service
+from .services.websocket_service import websocket_manager, WebSocketMessage, MessageType
 
+# Import des routers
+from .routers import (
+    debates_router,
+    streaming_router,
+    collections_router,
+    health_router
+)
+
+# Configuration du logger
+logger = structlog.get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Gestionnaire du cycle de vie de l'application"""
+    logger.info("🚀 Démarrage RobianAPI", version=settings.app.app_version)
+    
+    try:
+        # 1. Initialisation de la base de données
+        logger.info("🐘 Initialisation PostgreSQL...")
+        await init_database()
+        
+        # 2. Connexion au cache Redis
+        logger.info("🔴 Connexion Redis...")
+        await cache_service.connect()
+        
+        # 3. Vérifications système
+        platform_info = get_platform_info()
+        logger.info("💻 Plateforme détectée", 
+                   system=platform_info["system"],
+                   python_version=platform_info["python_version"])
+        
+        # 4. Affichage de la configuration
+        logger.info("⚙️ Configuration chargée",
+                   environment=settings.app.environment,
+                   debug=settings.app.debug,
+                   data_dir=str(settings.paths.data_dir))
+        
+        logger.info("✅ RobianAPI initialisée avec succès")
+        
+        yield  # L'application fonctionne ici
+        
+    except Exception as e:
+        logger.error("❌ Erreur lors de l'initialisation", error=str(e))
+        raise
+    
+    finally:
+        # Nettoyage lors de l'arrêt
+        logger.info("🛑 Arrêt de RobianAPI...")
+        
+        try:
+            await cache_service.disconnect()
+            await close_database()
+            logger.info("✅ Nettoyage terminé")
+        except Exception as e:
+            logger.error("❌ Erreur lors du nettoyage", error=str(e))
+
+
+# Création de l'application FastAPI
 app = FastAPI(
-    title="AN-droid API",
-    description="API pour l'application Android d'écoute des débats de l'Assemblée nationale",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
+    title=settings.app.app_name,
+    description=settings.app.app_description,
+    version=settings.app.app_version,
+    docs_url=settings.app.docs_url if settings.app.environment != "production" else None,
+    redoc_url=settings.app.redoc_url if settings.app.environment != "production" else None,
+    openapi_url=settings.app.openapi_url if settings.app.environment != "production" else None,
+    lifespan=lifespan
 )
 
-# Configuration CORS pour l'app Android
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # À restreindre en production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Configuration des middlewares
+setup_middleware(app)
 
-# Models Pydantic
-class DebatInfo(BaseModel):
-    id: str
-    title: str
-    date: str
-    duration: Optional[int] = None  # en secondes
-    type: str  # "seance_publique", "commission", "audition"
-    commission: Optional[str] = None
-    url_source: str
-    url_stream: Optional[str] = None
-    thumbnail: Optional[str] = None
-    description: Optional[str] = None
-    intervenants: List[str] = []
-    status: str = "disponible"  # "disponible", "en_cours", "programme", "extraction"
+# Handler d'exceptions global
+app.add_exception_handler(Exception, global_exception_handler)
 
-class ProgrammeSeance(BaseModel):
-    date: str
-    heure: str
-    titre: str
-    type: str
-    commission: Optional[str] = None
-    salle: Optional[str] = None
-    url: Optional[str] = None
+# Inclusion des routers
+app.include_router(health_router)
+app.include_router(debates_router)
+app.include_router(streaming_router)
+app.include_router(collections_router)
 
-class ExtractionRequest(BaseModel):
-    url: str
-    priority: str = "normal"  # "normal", "urgent"
 
-class ApiResponse(BaseModel):
-    success: bool
-    message: str
-    data: Optional[Dict[str, Any]] = None
+# =============================================================================
+# ROUTES PRINCIPALES
+# =============================================================================
 
-# Variables globales
-DOWNLOAD_DIR = Path("./downloads")
-CACHE_DIR = Path("./cache")
-DOWNLOAD_DIR.mkdir(exist_ok=True)
-CACHE_DIR.mkdir(exist_ok=True)
-
-# Cache en mémoire simple (à remplacer par Redis en production)
-cache_debats = {}
-cache_programme = {}
-
-@app.on_event("startup")
-async def startup_event():
-    print("🚀 Démarrage de l'API AN-droid")
-    print(f"📁 Dossier téléchargements: {DOWNLOAD_DIR.absolute()}")
-    print(f"💾 Dossier cache: {CACHE_DIR.absolute()}")
-
-@app.get("/", response_model=ApiResponse)
+@app.get("/", response_model=Dict[str, Any])
 async def root():
-    """Point d'entrée de l'API"""
-    return ApiResponse(
-        success=True,
-        message="API AN-droid opérationnelle",
-        data={
-            "version": "1.0.0",
-            "endpoints": ["/api/debats", "/api/programme", "/api/extraction"]
+    """Point d'entrée principal de l'API"""
+    return {
+        "message": "RobianAPI - API Backend pour l'application RobianAPP",
+        "version": settings.app.app_version,
+        "environment": settings.app.environment,
+        "status": "operational",
+        "features": {
+            "cache_redis": True,
+            "websockets": True,
+            "database": "postgresql",
+            "platform": get_platform_info()["system"]
+        },
+        "endpoints": {
+            "debates": "/api/debates/",
+            "streaming": "/api/streaming/",
+            "collections": "/api/collections/",
+            "favorites": "/api/favorites/",
+            "websocket": "/ws",
+            "health": "/health/",
+            "docs": settings.app.docs_url if settings.app.environment != "production" else None
+        },
+        "links": {
+            "documentation": settings.app.docs_url if settings.app.environment != "production" else None,
+            "repository": "https://github.com/robian-api/robian-api",
+            "support": "https://github.com/robian-api/robian-api/issues"
         }
-    )
+    }
 
-@app.get("/api/debats", response_model=List[DebatInfo])
-async def list_debats(
-    date_debut: Optional[str] = Query(None, description="Date de début (YYYY-MM-DD)"),
-    date_fin: Optional[str] = Query(None, description="Date de fin (YYYY-MM-DD)"),
-    type_debat: Optional[str] = Query(None, description="Type de débat"),
-    commission: Optional[str] = Query(None, description="Commission spécifique"),
-    limit: int = Query(50, description="Nombre maximum de résultats")
+
+# =============================================================================
+# WEBSOCKET ENDPOINT
+# =============================================================================
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
+    """Endpoint WebSocket pour les notifications temps réel"""
+    client_id = await websocket_manager.connect(websocket, client_id)
+    
+    try:
+        while True:
+            # Recevoir et traiter les messages du client
+            message = await websocket.receive_text()
+            await websocket_manager.handle_message(client_id, message)
+            
+    except WebSocketDisconnect:
+        await websocket_manager.disconnect(client_id)
+        logger.info("🔌 Client WebSocket déconnecté", client_id=client_id)
+    except Exception as e:
+        logger.error("❌ Erreur WebSocket", client_id=client_id, error=str(e))
+        await websocket_manager.disconnect(client_id)
+
+
+# =============================================================================
+# ROUTES DE COMPATIBILITÉ (anciennes routes)
+# =============================================================================
+
+@app.get("/api/debats")
+async def legacy_list_debates(
+    date_debut: str = None,
+    date_fin: str = None,
+    type_debat: str = None,
+    commission: str = None,
+    limit: int = 50
 ):
     """
-    Lister les débats disponibles avec filtres optionnels
+    Route de compatibilité pour l'ancienne API
+    Redirige vers la nouvelle API moderne avec cache
     """
-    try:
-        # Vérifier le cache
-        cache_key = f"debats_{date_debut}_{date_fin}_{type_debat}_{commission}_{limit}"
-        if cache_key in cache_debats:
-            print(f"📋 Débats depuis cache: {len(cache_debats[cache_key])} résultats")
-            return cache_debats[cache_key]
-        
-        # Si pas en cache, explorer le site
-        if ANSiteExplorer:
-            explorer = ANSiteExplorer()
-            results = explorer.run_full_exploration()
-            
-            # Convertir les résultats en format DebatInfo
-            debats = []
-            for i, metadata in enumerate(results.get('video_metadata', [])):
-                debat = DebatInfo(
-                    id=f"debat_{i}",
-                    title=metadata.get('title', 'Débat sans titre'),
-                    date=metadata.get('date', datetime.now().strftime('%Y-%m-%d')),
-                    duration=parse_duration(metadata.get('duration')),
-                    type=detect_debat_type(metadata.get('title', '')),
-                    url_source=metadata.get('url', ''),
-                    description=metadata.get('title', '')
-                )
-                debats.append(debat)
-            
-            # Appliquer les filtres
-            filtered_debats = apply_filters(debats, date_debut, date_fin, type_debat, commission)
-            limited_debats = filtered_debats[:limit]
-            
-            # Mettre en cache
-            cache_debats[cache_key] = limited_debats
-            
-            print(f"✅ Débats extraits: {len(limited_debats)} résultats")
-            return limited_debats
-        
-        else:
-            # Fallback: données mock pour les tests
-            mock_debats = generate_mock_debats()
-            return mock_debats[:limit]
-            
-    except Exception as e:
-        print(f"❌ Erreur liste débats: {e}")
-        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+    # Redirection vers le router des débats
+    from .routers.debates import list_debates
+    from .models import get_db_session
+    
+    # Simuler les paramètres pour la nouvelle API
+    filters = {}
+    if type_debat:
+        filters["type"] = type_debat
+    if commission:
+        filters["commission"] = commission
+    
+    # Note: Cette redirection simple ne gère pas parfaitement tous les cas
+    # En production, utiliser une vraie redirection HTTP ou adapter les paramètres
+    return {
+        "message": "Cette route est dépréciée. Utilisez /api/debates/ à la place.",
+        "new_endpoint": "/api/debates/",
+        "filters_suggested": filters
+    }
 
-@app.get("/api/debats/{debat_id}", response_model=DebatInfo)
-async def get_debat(debat_id: str):
-    """
-    Obtenir les détails d'un débat spécifique
-    """
-    try:
-        # Rechercher dans tous les caches
-        for cached_list in cache_debats.values():
-            for debat in cached_list:
-                if debat.id == debat_id:
-                    print(f"📺 Débat trouvé: {debat.title}")
-                    return debat
-        
-        # Si pas trouvé, générer une erreur
-        raise HTTPException(status_code=404, detail=f"Débat {debat_id} non trouvé")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Erreur get débat: {e}")
-        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
-@app.get("/api/debats/{debat_id}/stream")
-async def get_audio_stream(debat_id: str, background_tasks: BackgroundTasks):
-    """
-    Obtenir l'URL de streaming audio ou déclencher l'extraction
-    """
-    try:
-        # Récupérer les infos du débat
-        debat = None
-        for cached_list in cache_debats.values():
-            for d in cached_list:
-                if d.id == debat_id:
-                    debat = d
-                    break
-        
-        if not debat:
-            raise HTTPException(status_code=404, detail="Débat non trouvé")
-        
-        # Vérifier si l'audio est déjà extrait
-        audio_file = find_audio_file(debat_id)
-        if audio_file:
-            print(f"🎵 Audio disponible: {audio_file}")
-            return {
-                "stream_url": f"/api/debats/{debat_id}/file",
-                "status": "ready",
-                "file_size": os.path.getsize(audio_file)
-            }
-        
-        # Si pas extrait, lancer l'extraction en arrière-plan
-        if AudioExtractor and debat.url_source:
-            background_tasks.add_task(extract_audio_background, debat_id, debat.url_source)
-            
-            return {
-                "stream_url": None,
-                "status": "extracting",
-                "message": "Extraction en cours, réessayez dans quelques minutes"
-            }
-        
-        raise HTTPException(status_code=503, detail="Service d'extraction non disponible")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Erreur stream audio: {e}")
-        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+@app.get("/api/debats/{debat_id}")
+async def legacy_get_debate(debat_id: str):
+    """Route de compatibilité pour l'ancienne API"""
+    return {
+        "message": "Cette route est dépréciée. Utilisez /api/debates/{debate_id} à la place.",
+        "new_endpoint": f"/api/debates/{debat_id}"
+    }
 
-@app.get("/api/debats/{debat_id}/file")
-async def download_audio_file(debat_id: str):
-    """
-    Télécharger le fichier audio d'un débat
-    """
-    try:
-        audio_file = find_audio_file(debat_id)
-        if not audio_file:
-            raise HTTPException(status_code=404, detail="Fichier audio non trouvé")
-        
-        print(f"📁 Envoi fichier: {audio_file}")
-        return FileResponse(
-            audio_file,
-            media_type="audio/mpeg",
-            filename=f"debat_{debat_id}.mp3"
+
+@app.get("/api/programme")
+async def legacy_programme(date_param: str = None):
+    """Route de compatibilité pour le programme"""
+    target_date = date_param or datetime.now().strftime('%Y-%m-%d')
+    
+    # Cache check
+    cache_key = f"programme_{target_date}"
+    cached_programme = await cache_service.get("metadata", cache_key)
+    if cached_programme:
+        return cached_programme
+    
+    # Simulation du programme (à remplacer par DB query des ScheduledSession)
+    programme = [
+        {
+            "date": target_date,
+            "heure": "09:00",
+            "titre": "Séance publique",
+            "type": "seance_publique",
+            "commission": None,
+            "salle": "Hémicycle",
+            "url": "https://videos.assemblee-nationale.fr/live"
+        },
+        {
+            "date": target_date,
+            "heure": "14:00",
+            "titre": "Commission des finances",
+            "type": "commission",
+            "commission": "Finances",
+            "salle": "Salle 6350",
+            "url": None
+        }
+    ]
+    
+    # Cache pour 24h (programme change peu)
+    await cache_service.set("metadata", cache_key, programme, ttl=86400)
+    
+    return programme
+
+
+@app.get("/api/cache/stats")
+async def cache_stats():
+    """Statistiques du cache Redis (debug)"""
+    if settings.app.environment == "production":
+        return JSONResponse(status_code=404, content={"error": "Not available in production"})
+    
+    stats = await cache_service.get_stats()
+    return {
+        "cache_stats": stats,
+        "websocket_stats": await websocket_manager.get_stats()
+    }
+
+
+# =============================================================================
+# ROUTES D'EXTRACTION (compatibilité)
+# =============================================================================
+
+@app.post("/api/extraction")
+async def legacy_extraction_request(request: Request):
+    """Route de compatibilité pour l'extraction"""
+    body = await request.json()
+    debate_id = body.get("debate_id")
+    
+    if not debate_id:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "debate_id requis"}
         )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Erreur download fichier: {e}")
-        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+    
+    return {
+        "message": "Cette route est dépréciée. Utilisez /api/streaming/{debate_id}/extract à la place.",
+        "new_endpoint": f"/api/streaming/{debate_id}/extract",
+        "method": "POST"
+    }
 
-@app.get("/api/programme", response_model=List[ProgrammeSeance])
-async def get_programme(
-    date_param: Optional[str] = Query(None, description="Date (YYYY-MM-DD), défaut aujourd'hui")
-):
-    """
-    Obtenir le programme des séances
-    """
-    try:
-        target_date = date_param or datetime.now().strftime('%Y-%m-%d')
-        
-        # Vérifier le cache
-        if target_date in cache_programme:
-            print(f"📅 Programme depuis cache: {target_date}")
-            return cache_programme[target_date]
-        
-        # Simuler la récupération du programme (à implémenter avec scraping)
-        programme = generate_mock_programme(target_date)
-        
-        # Mettre en cache
-        cache_programme[target_date] = programme
-        
-        print(f"✅ Programme généré: {len(programme)} séances pour {target_date}")
-        return programme
-        
-    except Exception as e:
-        print(f"❌ Erreur programme: {e}")
-        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
-
-@app.post("/api/extraction", response_model=ApiResponse)
-async def request_extraction(
-    request: ExtractionRequest, 
-    background_tasks: BackgroundTasks
-):
-    """
-    Demander l'extraction d'une URL spécifique
-    """
-    try:
-        if not AudioExtractor:
-            raise HTTPException(status_code=503, detail="Service d'extraction non disponible")
-        
-        # Générer un ID pour cette extraction
-        extraction_id = f"ext_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
-        # Lancer l'extraction en arrière-plan
-        background_tasks.add_task(
-            extract_audio_background, 
-            extraction_id, 
-            request.url, 
-            request.priority
-        )
-        
-        return ApiResponse(
-            success=True,
-            message="Extraction démarrée",
-            data={
-                "extraction_id": extraction_id,
-                "status": "started",
-                "url": request.url
-            }
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Erreur demande extraction: {e}")
-        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 @app.get("/api/extraction/{extraction_id}")
-async def get_extraction_status(extraction_id: str):
-    """
-    Vérifier le statut d'une extraction
-    """
-    try:
-        # Vérifier si le fichier existe
-        audio_file = find_audio_file(extraction_id)
-        if audio_file:
-            return {
-                "extraction_id": extraction_id,
-                "status": "completed",
-                "file_url": f"/api/debats/{extraction_id}/file",
-                "file_size": os.path.getsize(audio_file)
-            }
-        
-        # Sinon, supposer qu'elle est en cours
-        return {
-            "extraction_id": extraction_id,
-            "status": "processing",
-            "message": "Extraction en cours"
-        }
-        
-    except Exception as e:
-        print(f"❌ Erreur statut extraction: {e}")
-        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+async def legacy_extraction_status(extraction_id: str):
+    """Route de compatibilité pour le statut d'extraction"""
+    return {
+        "message": "Cette route est dépréciée. Utilisez /api/streaming/{debate_id}/status à la place.",
+        "extraction_id": extraction_id
+    }
 
-# Fonctions utilitaires
-
-def parse_duration(duration_str):
-    """Parser une durée en format texte vers secondes"""
-    if not duration_str:
-        return None
-    
-    try:
-        # Format HH:MM:SS
-        if ':' in duration_str:
-            parts = duration_str.split(':')
-            if len(parts) == 3:
-                h, m, s = map(int, parts)
-                return h * 3600 + m * 60 + s
-            elif len(parts) == 2:
-                m, s = map(int, parts)
-                return m * 60 + s
-        
-        # Format texte (1h 30m)
-        import re
-        hour_match = re.search(r'(\d+)h', duration_str)
-        min_match = re.search(r'(\d+)m', duration_str)
-        
-        hours = int(hour_match.group(1)) if hour_match else 0
-        minutes = int(min_match.group(1)) if min_match else 0
-        
-        return hours * 3600 + minutes * 60
-        
-    except:
-        return None
-
-def detect_debat_type(title):
-    """Détecter le type de débat depuis le titre"""
-    title_lower = title.lower()
-    
-    if 'commission' in title_lower:
-        return 'commission'
-    elif 'audition' in title_lower:
-        return 'audition'
-    elif 'séance' in title_lower or 'seance' in title_lower:
-        return 'seance_publique'
-    else:
-        return 'autre'
-
-def apply_filters(debats, date_debut, date_fin, type_debat, commission):
-    """Appliquer les filtres à la liste des débats"""
-    filtered = debats
-    
-    if date_debut:
-        filtered = [d for d in filtered if d.date >= date_debut]
-    
-    if date_fin:
-        filtered = [d for d in filtered if d.date <= date_fin]
-    
-    if type_debat:
-        filtered = [d for d in filtered if d.type == type_debat]
-    
-    if commission:
-        filtered = [d for d in filtered if d.commission and commission.lower() in d.commission.lower()]
-    
-    return filtered
-
-def find_audio_file(debat_id):
-    """Trouver le fichier audio correspondant à un débat"""
-    # Rechercher dans le dossier de téléchargement
-    for ext in ['.mp3', '.m4a', '.wav']:
-        pattern = f"*{debat_id}*{ext}"
-        matches = list(DOWNLOAD_DIR.glob(pattern))
-        if matches:
-            return str(matches[0])
-    
-    return None
-
-async def extract_audio_background(debat_id, url, priority="normal"):
-    """Extraction audio en arrière-plan"""
-    print(f"🔄 Extraction background: {debat_id} - {url}")
-    
-    try:
-        if AudioExtractor:
-            extractor = AudioExtractor(download_dir=str(DOWNLOAD_DIR))
-            result = extractor.extract_audio(url)
-            
-            if result.get('success'):
-                print(f"✅ Extraction réussie: {debat_id}")
-            else:
-                print(f"❌ Extraction échec: {debat_id} - {result.get('error')}")
-            
-            extractor.cleanup()
-        
-    except Exception as e:
-        print(f"❌ Erreur extraction background: {e}")
-
-def generate_mock_debats():
-    """Générer des données mock pour les tests"""
-    return [
-        DebatInfo(
-            id="debat_1",
-            title="Séance publique du 22 mai 2025",
-            date="2025-05-22",
-            duration=7200,  # 2h
-            type="seance_publique",
-            url_source="https://videos.assemblee-nationale.fr/video.1234567",
-            description="Discussion du projet de loi relatif à la fin de vie"
-        ),
-        DebatInfo(
-            id="debat_2", 
-            title="Commission des finances - Audition ministre",
-            date="2025-05-22",
-            duration=5400,  # 1h30
-            type="audition",
-            commission="Finances",
-            url_source="https://videos.assemblee-nationale.fr/video.1234568",
-            description="Audition du ministre de l'Économie"
-        )
-    ]
-
-def generate_mock_programme(date_str):
-    """Générer un programme mock"""
-    return [
-        ProgrammeSeance(
-            date=date_str,
-            heure="09:00",
-            titre="Séance publique",
-            type="seance_publique",
-            salle="Hémicycle",
-            url="https://videos.assemblee-nationale.fr/live"
-        ),
-        ProgrammeSeance(
-            date=date_str,
-            heure="14:00",
-            titre="Commission des lois",
-            type="commission",
-            commission="Lois constitutionnelles",
-            salle="Salle 6350"
-        )
-    ]
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Démarrage du serveur API AN-droid")
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    
+    logger.info("🚀 Démarrage direct de RobianAPI")
+    uvicorn.run(
+        "api.main:app",
+        host=settings.app.host,
+        port=settings.app.port,
+        reload=settings.app.reload,
+        log_level=settings.monitoring.log_level.lower()
+    )

@@ -1,0 +1,92 @@
+{
+  "timestamp": "2025-06-09T19:11:43.658488",
+  "base_url": "https://videos.assemblee-nationale.fr/",
+  "homepage_links": [
+    {
+      "url": "https://videos.assemblee-nationale.fr/seance-publique",
+      "text": "À la demande",
+      "title": ""
+    },
+    {
+      "url": "https://videos.assemblee-nationale.fr/Aide_a_la_decoupe_de_videos.pdf",
+      "text": "Aide à la découpede vidéos",
+      "title": ""
+    },
+    {
+      "url": "https://videos.assemblee-nationale.fr/video.17023620_6841ecc048526.3eme-seance--examen-de-diverses-propositions-de-loi--5-juin-2025",
+      "text": "",
+      "title": ""
+    },
+    {
+      "url": "https://videos.assemblee-nationale.fr/video.17023620_6841ecc048526.3eme-seance--examen-de-diverses-propositions-de-loi--5-juin-2025",
+      "text": "5juin20253ème séance : Examen de diverses propositions de loi",
+      "title": ""
+    },
+    {
+      "url": "https://videos.assemblee-nationale.fr/video.17020434_6841915054b31.2eme-seance--discussions-de-diverses-propositions-de-loi-5-juin-2025",
+      "text": "",
+      "title": ""
+    },
+    {
+      "url": "https://videos.assemblee-nationale.fr/video.17020434_6841915054b31.2eme-seance--discussions-de-diverses-propositions-de-loi-5-juin-2025",
+      "text": "5juin20252ème séance : Discussions de diverses propositions de loi",
+      "title": ""
+    },
+    {
+      "url": "https://videos.assemblee-nationale.fr/video.17020232_68418c697d527.freins-a-la-reindustrialisation-de-la-france--representants-du-mouvement-des-entreprises-de-france--5-juin-2025",
+      "text": "",
+      "title": ""
+    },
+    {
+      "url": "https://videos.assemblee-nationale.fr/video.17020232_68418c697d527.freins-a-la-reindustrialisation-de-la-france--representants-du-mouvement-des-entreprises-de-france--5-juin-2025",
+      "text": "5juin2025Freins à la réindustrialisation de la France : Représentants du Mouvement des entreprises de France (Medef)",
+      "title": ""
+    },
+    {
+      "url": "https://videos.assemblee-nationale.fr/video.17020027_684186d953662.effets-psychologiques-de-tiktok-sur-les-mineurs--representants-de-la-dgesco-la-dne-et-du-reseau-ca-5-juin-2025",
+      "text": "",
+      "title": ""
+    },
+    {
+      "url": "https://videos.assemblee-nationale.fr/video.17020027_684186d953662.effets-psychologiques-de-tiktok-sur-les-mineurs--representants-de-la-dgesco-la-dne-et-du-reseau-ca-5-juin-2025",
+      "text": "5juin2025Effets psychologiques de TikTok sur les mineurs : Représentants de la DGESCO, la DNE et du Réseau Canopé",
+      "title": ""
+    }
+  ],
+  "video_metadata": [
+    {
+      "url": "https://videos.assemblee-nationale.fr/seance-publique",
+      "title": "Panier",
+      "date": null,
+      "duration": null,
+      "video_urls": [],
+      "download_links": [
+        {
+          "type": "download",
+          "url": "https://videos.assemblee-nationale.fr/",
+          "text": "Télécharger"
+        }
+      ],
+      "javascript_player": {}
+    },
+    {
+      "url": "https://videos.assemblee-nationale.fr/Aide_a_la_decoupe_de_videos.pdf",
+      "title": null,
+      "date": "2022-06-22",
+      "duration": "05:22:35",
+      "video_urls": [],
+      "download_links": [],
+      "javascript_player": {}
+    },
+    {
+      "url": "https://videos.assemblee-nationale.fr/video.17023620_6841ecc048526.3eme-seance--examen-de-diverses-propositions-de-loi--5-juin-2025",
+      "title": "Panier",
+      "date": null,
+      "duration": null,
+      "video_urls": [],
+      "download_links": [],
+      "javascript_player": {}
+    }
+  ],
+  "patterns_discovered": []
+}

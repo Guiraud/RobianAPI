@@ -1,27 +1,256 @@
 version: '3.8'
 
 services:
-  backend:
-    build: .
+  # =============================================================================
+  # API BACKEND
+  # =============================================================================
+  api:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: robian-api
     ports:
-      - "8000:8000"
+      - "${PORT:-8000}:8000"
     volumes:
-      - ./app:/app/app
+      # Code source (développement)
+      - ./api:/app/api:ro
+      - ./scripts:/app/scripts:ro
+      # Données persistantes
+      - audio_data:/app/data/audio
+      - cache_data:/app/data/cache
+      - logs_data:/app/data/logs
+      # Configuration
+      - ./.env:/app/.env:ro
     environment:
-      - DATABASE_URL=postgresql://robian:robian@db:5432/robian
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DATABASE_URL=postgresql+asyncpg://robian:${POSTGRES_PASSWORD:-robian_secret}@postgres:5432/${POSTGRES_DB:-robian_db}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
     depends_on:
-      - db
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - robian-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-  db:
-    image: postgres:15
+  # =============================================================================
+  # BASE DE DONNÉES POSTGRESQL
+  # =============================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: robian-postgres
     environment:
-      POSTGRES_DB: robian
-      POSTGRES_USER: robian
-      POSTGRES_PASSWORD: robian
+      POSTGRES_DB: ${POSTGRES_DB:-robian_db}
+      POSTGRES_USER: ${POSTGRES_USER:-robian}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-robian_secret}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./scripts/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
+    restart: unless-stopped
+    networks:
+      - robian-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-robian} -d ${POSTGRES_DB:-robian_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    sysctls:
+      # Optimisations PostgreSQL pour performance
+      - kernel.shmmax=268435456
+    shm_size: 256mb
 
+  # =============================================================================
+  # REDIS CACHE
+  # =============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: robian-redis
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    restart: unless-stopped
+    networks:
+      - robian-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    sysctls:
+      - net.core.somaxconn=1024
+
+  # =============================================================================
+  # CELERY WORKER (TÂCHES ASYNCHRONES)
+  # =============================================================================
+  celery-worker:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: robian-celery-worker
+    command: celery -A api.celery_app worker --loglevel=info --concurrency=4
+    volumes:
+      - ./api:/app/api:ro
+      - ./scripts:/app/scripts:ro
+      - audio_data:/app/data/audio
+      - cache_data:/app/data/cache
+      - logs_data:/app/data/logs
+      - ./.env:/app/.env:ro
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DATABASE_URL=postgresql+asyncpg://robian:${POSTGRES_PASSWORD:-robian_secret}@postgres:5432/${POSTGRES_DB:-robian_db}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+    networks:
+      - robian-network
+    healthcheck:
+      test: ["CMD", "celery", "-A", "api.celery_app", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # =============================================================================
+  # CELERY BEAT (TÂCHES PROGRAMMÉES)
+  # =============================================================================
+  celery-beat:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: robian-celery-beat
+    command: celery -A api.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    volumes:
+      - ./api:/app/api:ro
+      - ./scripts:/app/scripts:ro
+      - cache_data:/app/data/cache
+      - logs_data:/app/data/logs
+      - ./.env:/app/.env:ro
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - robian-network
+
+  # =============================================================================
+  # MONITORING - PROMETHEUS
+  # =============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: robian-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    networks:
+      - robian-network
+    profiles:
+      - monitoring
+
+  # =============================================================================
+  # MONITORING - GRAFANA
+  # =============================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: robian-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - robian-network
+    profiles:
+      - monitoring
+
+  # =============================================================================
+  # NGINX REVERSE PROXY (PRODUCTION)
+  # =============================================================================
+  nginx:
+    image: nginx:alpine
+    container_name: robian-nginx
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - robian-network
+    profiles:
+      - production
+
+# =============================================================================
+# VOLUMES PERSISTANTS
+# =============================================================================
 volumes:
   postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  audio_data:
+    driver: local
+  cache_data:
+    driver: local
+  logs_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# =============================================================================
+# RÉSEAUX
+# =============================================================================
+networks:
+  robian-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
