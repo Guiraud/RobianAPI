@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+ #!/usr/bin/env python3
 """
 Script de démarrage rapide pour RobianAPI
 Setup automatique et lancement en mode développement
@@ -9,13 +9,36 @@ import sys
 import asyncio
 import subprocess
 import time
+import importlib
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Charger les variables d'environnement depuis le fichier .env
+load_dotenv(override=True)
+
+# Afficher les variables de cache pour le débogage
+print("CACHE_TTL_DEFAULT:", os.getenv("CACHE_TTL_DEFAULT"))
+print("CACHE_TTL_DEBATES:", os.getenv("CACHE_TTL_DEBATES"))
+print("CACHE_TTL_STREAMING:", os.getenv("CACHE_TTL_STREAMING"))
+print("CACHE_TTL_METADATA:", os.getenv("CACHE_TTL_METADATA"))
 
 # Ajouter le dossier parent au PYTHONPATH
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Nettoyer le cache de Pydantic
+if 'pydantic' in sys.modules:
+    import pydantic
+    import pydantic_settings
+    import pydantic_core
+    importlib.reload(pydantic)
+    importlib.reload(pydantic_settings)
+    importlib.reload(pydantic_core)
+
 from api.config import settings, get_platform_info
 import structlog
+
+# Ajouter le dossier parent au PYTHONPATH
+sys.path.insert(0, str(Path(__file__).parent))
 
 logger = structlog.get_logger(__name__)
 

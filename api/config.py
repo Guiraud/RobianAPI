@@ -54,10 +54,27 @@ class RedisSettings(BaseSettings):
     redis_url: Optional[str] = Field(None, env="REDIS_URL")
     
     # Cache settings
-    cache_ttl_default: int = Field(300, env="CACHE_TTL_DEFAULT")  # 5 minutes
-    cache_ttl_debates: int = Field(300, env="CACHE_TTL_DEBATES")  # 5 minutes
-    cache_ttl_streaming: int = Field(3600, env="CACHE_TTL_STREAMING")  # 1 hour
-    cache_ttl_metadata: int = Field(86400, env="CACHE_TTL_METADATA")  # 24 hours
+    cache_ttl_default: int = Field(300, env="CACHE_TTL_DEFAULT")
+    cache_ttl_debates: int = Field(300, env="CACHE_TTL_DEBATES")
+    cache_ttl_streaming: int = Field(3600, env="CACHE_TTL_STREAMING")
+    cache_ttl_metadata: int = Field(86400, env="CACHE_TTL_METADATA")
+
+    @validator(
+        "cache_ttl_default",
+        "cache_ttl_debates",
+        "cache_ttl_streaming",
+        "cache_ttl_metadata",
+        pre=True
+    )
+    def clean_ttl_values(cls, v):
+        if isinstance(v, str):
+            # Supprimer les commentaires et espaces
+            v = v.split('#')[0].strip()
+            try:
+                return int(v)
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid TTL value: {v}") from e
+        return v
     
     @validator("redis_url", pre=True)
     def assemble_redis_connection(cls, v: Optional[str], values: dict) -> str:
@@ -75,7 +92,6 @@ class RedisSettings(BaseSettings):
             f"{values.get('redis_db')}"
         )
 
-
 class SecuritySettings(BaseSettings):
     """Configuration sécurité"""
     
@@ -85,22 +101,21 @@ class SecuritySettings(BaseSettings):
     access_token_expire_minutes: int = Field(30, env="ACCESS_TOKEN_EXPIRE_MINUTES")
     
     # CORS settings
-    backend_cors_origins: List[str] = Field(
-        ["http://localhost:3000", "http://localhost:8080"], 
+    backend_cors_origins: str = Field(
+        "http://localhost:3000,http://localhost:8080",
         env="BACKEND_CORS_ORIGINS"
     )
     
     # Rate limiting
     rate_limit_per_minute: int = Field(100, env="RATE_LIMIT_PER_MINUTE")
-    rate_limit_burst: int = Field(200, env="RATE_LIMIT_BURST")
+    rate_limit_burst: int = Field(200, env="RATE_LIBMIT_BURST")
     
-    @validator("backend_cors_origins", pre=True)
-    def assemble_cors_origins(cls, v):
-        if isinstance(v, str) and not v.startswith("["):
-            return [i.strip() for i in v.split(",")]
-        elif isinstance(v, (list, str)):
-            return v
-        raise ValueError(v)
+    @property
+    def cors_origins_list(self) -> List[str]:
+        """Retourne la liste des origines CORS"""
+        if not self.backend_cors_origins:
+            return []
+        return [origin.strip() for origin in self.backend_cors_origins.split(",") if origin.strip()]
 
 
 class PathSettings(BaseSettings):
