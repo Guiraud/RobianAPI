@@ -45,3 +45,5 @@ docker-compose.override.yml
 # Backup files
 *.backup
 *.bak
+.coverage
+htmlcov/
