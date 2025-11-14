@@ -35,11 +35,10 @@ Base = declarative_base(metadata=metadata)
 # Mixin pour les colonnes communes
 class BaseModel:
     """Mixin pour les colonnes communes"""
-    id = Column(String(36), primary_key=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(
-        DateTime(timezone=True), 
-        server_default=func.now(), 
+    created_at: Column = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Column = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
         onupdate=func.now()
     )
 

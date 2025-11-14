@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import String, DateTime, Boolean, Integer, Text, JSON, ForeignKey, Index, Table
+from sqlalchemy import String, DateTime, Boolean, Integer, Text, JSON, ForeignKey, Index, Table, Column, func
 from sqlalchemy.dialects.postgresql import ARRAY
 
 from .database import Base
@@ -18,8 +18,8 @@ from .database import Base
 collection_debates = Table(
     "collection_debates",
     Base.metadata,
-    mapped_column("collection_id", String(36), ForeignKey("collections.id"), primary_key=True),
-    mapped_column("debate_id", String(36), ForeignKey("debates.id"), primary_key=True),
+    Column("collection_id", String(36), ForeignKey("collections.id"), primary_key=True),
+    Column("debate_id", String(36), ForeignKey("debates.id"), primary_key=True),
     Index("idx_collection_debates_collection", "collection_id"),
     Index("idx_collection_debates_debate", "debate_id"),
 )
@@ -69,7 +69,7 @@ class Collection(Base):
     view_count: Mapped[int] = mapped_column(Integer, default=0)
     
     # Métadonnées supplémentaires
-    metadata: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    extra_data: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
     
     # Relations - sera ajouté quand debates.py importera collections
     # debates: Mapped[List["Debate"]] = relationship(
@@ -136,7 +136,7 @@ class Favorite(Base):
     watch_count: Mapped[int] = mapped_column(Integer, default=0)
     
     # Métadonnées
-    metadata: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    extra_data: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
     
     # Relations
     debate: Mapped["Debate"] = relationship("Debate")
@@ -193,32 +193,36 @@ class Favorite(Base):
 class UserActivity(Base):
     """Activité et statistiques utilisateur"""
     __tablename__ = "user_activities"
-    
+
     # Identifiant unique
     id: Mapped[str] = mapped_column(
-        String(36), 
-        primary_key=True, 
+        String(36),
+        primary_key=True,
         default=lambda: str(uuid.uuid4())
     )
-    
+
     # Utilisateur
     user_id: Mapped[Optional[str]] = mapped_column(String(36))
     session_id: Mapped[Optional[str]] = mapped_column(String(36))  # Session anonyme
-    
+
     # Action effectuée
     action_type: Mapped[ActivityType] = mapped_column(String(50), nullable=False)
-    
+
     # Contexte de l'action
     debate_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("debates.id"))
     collection_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("collections.id"))
-    
+
     # Données de l'action
     action_data: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
-    
+
     # Métadonnées de contexte
     user_agent: Mapped[Optional[str]] = mapped_column(String(500))
     ip_address: Mapped[Optional[str]] = mapped_column(String(45))  # IPv6 max length
     platform: Mapped[Optional[str]] = mapped_column(String(50))
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relations
     debate: Mapped[Optional["Debate"]] = relationship("Debate")
@@ -274,7 +278,7 @@ class SystemStats(Base):
     json_value: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
     
     # Métadonnées
-    metadata: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    extra_data: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
     
     # Index
     __table_args__ = (

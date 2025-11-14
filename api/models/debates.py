@@ -8,7 +8,7 @@ from datetime import datetime, date
 from enum import Enum
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import String, DateTime, Boolean, Integer, Text, JSON, ForeignKey, Index
+from sqlalchemy import String, Date, DateTime, Boolean, Integer, Text, JSON, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 
 from .database import Base
@@ -53,7 +53,7 @@ class Debate(Base):
     status: Mapped[DebateStatus] = mapped_column(String(50), default=DebateStatus.PROGRAMME)
     
     # Dates et durée
-    date: Mapped[date] = mapped_column(nullable=False)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     duration_minutes: Mapped[Optional[int]] = mapped_column(Integer)
@@ -76,7 +76,7 @@ class Debate(Base):
     keywords: Mapped[List[str]] = mapped_column(ARRAY(String), default=list)
     
     # Métadonnées supplémentaires
-    metadata: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    extra_data: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
     
     # Statistiques
     view_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -196,7 +196,7 @@ class AudioFile(Base):
     download_url: Mapped[Optional[str]] = mapped_column(String(1000))
     
     # Métadonnées audio
-    metadata: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    extra_data: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
     
     # Statistiques
     download_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -290,7 +290,7 @@ class ScheduledSession(Base):
     )
     
     # Informations de base
-    date: Mapped[date] = mapped_column(nullable=False)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
     start_time: Mapped[str] = mapped_column(String(10), nullable=False)  # HH:MM
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     
@@ -305,7 +305,7 @@ class ScheduledSession(Base):
     
     # Métadonnées
     description: Mapped[Optional[str]] = mapped_column(Text)
-    metadata: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    extra_data: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
     
     # Index
     __table_args__ = (

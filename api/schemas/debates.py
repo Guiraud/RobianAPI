@@ -4,7 +4,8 @@ Validation et sérialisation des données API
 """
 
 from typing import List, Optional, Dict, Any
-from datetime import datetime, date
+from datetime import datetime
+from datetime import date as DateType
 from enum import Enum
 
 from pydantic import BaseModel, Field, validator, ConfigDict
@@ -35,7 +36,7 @@ class DebateBase(BaseModel):
     title: constr(min_length=1, max_length=500) = Field(..., description="Titre du débat")
     description: Optional[str] = Field(None, description="Description détaillée")
     type: DebateTypeSchema = Field(..., description="Type de débat")
-    date: date = Field(..., description="Date du débat")
+    date: DateType = Field(..., description="Date du débat")
     source_url: str = Field(..., description="URL source du débat")
     
     # Optionnels
@@ -77,7 +78,7 @@ class DebateUpdate(BaseModel):
     description: Optional[str] = None
     type: Optional[DebateTypeSchema] = None
     status: Optional[DebateStatusSchema] = None
-    date: Optional[date] = None
+    date: Optional[DateType] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     duration_minutes: Optional[conint(ge=0)] = None
@@ -153,8 +154,8 @@ class DebateSearchFilters(BaseModel):
     type: Optional[DebateTypeSchema] = Field(None, description="Type de débat")
     status: Optional[DebateStatusSchema] = Field(None, description="Statut du débat")
     commission: Optional[str] = Field(None, description="Commission")
-    date_start: Optional[date] = Field(None, description="Date de début")
-    date_end: Optional[date] = Field(None, description="Date de fin")
+    date_start: Optional[DateType] = Field(None, description="Date de début")
+    date_end: Optional[DateType] = Field(None, description="Date de fin")
     has_audio: Optional[bool] = Field(None, description="Avec fichiers audio disponibles")
     speakers: Optional[List[str]] = Field(None, description="Intervenants")
     tags: Optional[List[str]] = Field(None, description="Tags")
@@ -183,8 +184,8 @@ class DebateSearchFilters(BaseModel):
 
 class ScheduledSessionCreate(BaseModel):
     """Schéma pour créer une session programmée"""
-    date: date = Field(..., description="Date de la session")
-    start_time: constr(regex=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$') = Field(..., description="Heure de début (HH:MM)")
+    date: DateType = Field(..., description="Date de la session")
+    start_time: constr(pattern=r'^([01]?[0-9]|2[0-3]):[0-5][0-9]$') = Field(..., description="Heure de début (HH:MM)")
     title: constr(min_length=1, max_length=500) = Field(..., description="Titre de la session")
     type: DebateTypeSchema = Field(..., description="Type de session")
     commission: Optional[str] = Field(None, description="Commission")
