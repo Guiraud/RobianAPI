@@ -8,7 +8,7 @@ from datetime import datetime, date
 from enum import Enum
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import String, DateTime, Boolean, Integer, Text, JSON, ForeignKey, Index
+from sqlalchemy import String, DateTime, Boolean, Integer, Text, JSON, ForeignKey, Index, func
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 
 from .database import Base
@@ -36,12 +36,25 @@ class DebateStatus(str, Enum):
 class Debate(Base):
     """Modèle principal pour un débat"""
     __tablename__ = "debates"
-    
+
     # Identifiant unique
     id: Mapped[str] = mapped_column(
-        String(36), 
-        primary_key=True, 
+        String(36),
+        primary_key=True,
         default=lambda: str(uuid.uuid4())
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False
     )
     
     # Informations de base
@@ -160,12 +173,25 @@ class Debate(Base):
 class AudioFile(Base):
     """Fichiers audio extraits des débats"""
     __tablename__ = "audio_files"
-    
+
     # Identifiant unique
     id: Mapped[str] = mapped_column(
-        String(36), 
-        primary_key=True, 
+        String(36),
+        primary_key=True,
         default=lambda: str(uuid.uuid4())
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False
     )
     
     # Relation avec le débat
@@ -281,12 +307,25 @@ class AudioFile(Base):
 class ScheduledSession(Base):
     """Sessions programmées (programme des séances)"""
     __tablename__ = "scheduled_sessions"
-    
+
     # Identifiant unique
     id: Mapped[str] = mapped_column(
-        String(36), 
-        primary_key=True, 
+        String(36),
+        primary_key=True,
         default=lambda: str(uuid.uuid4())
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False
     )
     
     # Informations de base

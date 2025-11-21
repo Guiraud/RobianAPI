@@ -373,7 +373,7 @@ def setup_cors_middleware(app):
     """Configuration du middleware CORS"""
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.security.backend_cors_origins,
+        allow_origins=settings.security.cors_origins_list,  # Use the property that returns a list
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
         allow_headers=[
@@ -415,9 +415,9 @@ def setup_middleware(app):
     # 5. CORS (en dernier pour gérer les preflight OPTIONS)
     setup_cors_middleware(app)
     
-    logger.info("Middleware stack configured", 
+    logger.info("Middleware stack configured",
                 rate_limiting=settings.security.rate_limit_per_minute > 0,
-                cors_origins=len(settings.security.backend_cors_origins),
+                cors_origins=len(settings.security.cors_origins_list),
                 log_format=settings.monitoring.log_format)
 
 
