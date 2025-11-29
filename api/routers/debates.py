@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.orm import joinedload
 
-from ..models import get_db_session, Debate, AudioFile, DebateType, DebateStatus
+from ..models import get_db_session, get_session, Debate, AudioFile, DebateType, DebateStatus
 from ..schemas import (
     DebateResponse, 
     DebateListResponse, 
@@ -71,11 +71,12 @@ async def list_debates(
         
         if q:
             # Recherche textuelle dans titre et description
+            # Pour les tableaux PostgreSQL, utiliser contains() avec un tableau
             search_filter = or_(
                 Debate.title.ilike(f"%{q}%"),
                 Debate.description.ilike(f"%{q}%"),
-                Debate.speakers.any(q),  # Recherche dans le tableau speakers
-                Debate.tags.any(q)       # Recherche dans le tableau tags
+                Debate.speakers.contains([q]),  # Recherche dans le tableau speakers
+                Debate.tags.contains([q])       # Recherche dans le tableau tags
             )
             filters.append(search_filter)
         
@@ -177,7 +178,7 @@ async def get_debate(
     cached_debate = await cache_service.get("debates", cache_key)
     if cached_debate:
         # Incrémenter le compteur de vues en arrière-plan
-        background_tasks.add_task(increment_view_count, debate_id, db)
+        background_tasks.add_task(increment_view_count, debate_id)
         return DebateResponse(**cached_debate)
     
     try:
@@ -194,9 +195,9 @@ async def get_debate(
         
         # Cache pour 1 heure
         await cache_service.set("debates", cache_key, debate_response.model_dump(), ttl=3600)
-        
+
         # Incrémenter le compteur de vues en arrière-plan
-        background_tasks.add_task(increment_view_count, debate_id, db)
+        background_tasks.add_task(increment_view_count, debate_id)
         
         # Notifier via WebSocket
         await websocket_manager.broadcast_to_channel(
@@ -350,26 +351,28 @@ async def delete_debate(
         raise HTTPException(status_code=500, detail="Erreur lors de la suppression du débat")
 
 
-async def increment_view_count(debate_id: str, db: AsyncSession):
+async def increment_view_count(debate_id: str):
     """
     Incrémenter le compteur de vues de manière asynchrone
+    Crée sa propre session DB pour éviter les conflits avec la requête principale
     """
     try:
-        query = select(Debate).where(Debate.id == debate_id)
-        result = await db.execute(query)
-        debate = result.scalars().first()
-        
-        if debate:
-            debate.view_count += 1
-            await db.commit()
-            
-            # Invalider le cache pour forcer la mise à jour
-            await cache_service.delete("debates", f"detail_{debate_id}")
-            
-            logger.debug("👀 Vue incrémentée", debate_id=debate_id, new_count=debate.view_count)
-        
+        # Créer une nouvelle session pour le background task
+        async with get_session() as db:
+            query = select(Debate).where(Debate.id == debate_id)
+            result = await db.execute(query)
+            debate = result.scalars().first()
+
+            if debate:
+                debate.view_count += 1
+                await db.commit()
+
+                # Invalider le cache pour forcer la mise à jour
+                await cache_service.delete("debates", f"detail_{debate_id}")
+
+                logger.debug("👀 Vue incrémentée", debate_id=debate_id, new_count=debate.view_count)
+
     except Exception as e:
-        await db.rollback()
         logger.error("❌ Erreur incrémentation vue", debate_id=debate_id, error=str(e))
 
 

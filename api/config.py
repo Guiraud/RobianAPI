@@ -13,7 +13,9 @@ from pydantic import Field, validator
 
 class DatabaseSettings(BaseSettings):
     """Configuration base de données PostgreSQL"""
-    
+
+    model_config = {"extra": "ignore"}
+
     # PostgreSQL settings
     postgres_server: str = Field("localhost", env="POSTGRES_SERVER")
     postgres_port: int = Field(5432, env="POSTGRES_PORT")
@@ -46,7 +48,9 @@ class DatabaseSettings(BaseSettings):
 
 class RedisSettings(BaseSettings):
     """Configuration Redis pour le cache"""
-    
+
+    model_config = {"extra": "ignore"}
+
     redis_host: str = Field("localhost", env="REDIS_HOST")
     redis_port: int = Field(6379, env="REDIS_PORT")
     redis_password: Optional[str] = Field(None, env="REDIS_PASSWORD")
@@ -94,9 +98,15 @@ class RedisSettings(BaseSettings):
 
 class SecuritySettings(BaseSettings):
     """Configuration sécurité"""
-    
+
+    model_config = {"extra": "ignore"}
+
     # JWT settings
-    secret_key: str = Field(..., env="SECRET_KEY")
+    secret_key: str = Field(
+        "dev-secret-key-change-in-production-d89f7a6e8b4c3d2a1f9e8b7c6d5a4e3b2c1a",
+        env="SECRET_KEY",
+        description="Secret key for JWT tokens - MUST be changed in production!"
+    )
     algorithm: str = Field("HS256", env="ALGORITHM")
     access_token_expire_minutes: int = Field(30, env="ACCESS_TOKEN_EXPIRE_MINUTES")
     
@@ -108,7 +118,7 @@ class SecuritySettings(BaseSettings):
     
     # Rate limiting
     rate_limit_per_minute: int = Field(100, env="RATE_LIMIT_PER_MINUTE")
-    rate_limit_burst: int = Field(200, env="RATE_LIBMIT_BURST")
+    rate_limit_burst: int = Field(200, env="RATE_LIMIT_BURST")
     
     @property
     def cors_origins_list(self) -> List[str]:
@@ -120,7 +130,9 @@ class SecuritySettings(BaseSettings):
 
 class PathSettings(BaseSettings):
     """Configuration des chemins - Compatible Linux/macOS/Windows"""
-    
+
+    model_config = {"extra": "ignore"}
+
     # Base paths (auto-détection OS)
     base_dir: Path = Field(default_factory=lambda: Path(__file__).parent.parent)
     
@@ -146,9 +158,14 @@ class PathSettings(BaseSettings):
         if self.data_dir is None:
             if system == "linux":
                 # Linux: /var/lib/robian-api ou ~/.local/share/robian-api
-                if os.getuid() == 0:  # root
-                    self.data_dir = Path("/var/lib/robian-api")
-                else:
+                try:
+                    # Check if running as root (Unix-like systems only)
+                    if os.getuid() == 0:  # root
+                        self.data_dir = Path("/var/lib/robian-api")
+                    else:
+                        self.data_dir = Path.home() / ".local/share/robian-api"
+                except AttributeError:
+                    # os.getuid() doesn't exist on Windows
                     self.data_dir = Path.home() / ".local/share/robian-api"
             elif system == "darwin":  # macOS
                 self.data_dir = Path.home() / "Library/Application Support/robian-api"
@@ -169,7 +186,12 @@ class PathSettings(BaseSettings):
             self.audio_dir = self.data_dir / "audio"
         if self.logs_dir is None:
             if system == "linux":
-                self.logs_dir = Path("/var/log/robian-api") if os.getuid() == 0 else self.data_dir / "logs"
+                try:
+                    # Check if running as root (Unix-like systems only)
+                    self.logs_dir = Path("/var/log/robian-api") if os.getuid() == 0 else self.data_dir / "logs"
+                except AttributeError:
+                    # os.getuid() doesn't exist on Windows
+                    self.logs_dir = self.data_dir / "logs"
             else:
                 self.logs_dir = self.data_dir / "logs"
         if self.downloads_dir is None:
@@ -182,7 +204,9 @@ class PathSettings(BaseSettings):
 
 class AudioSettings(BaseSettings):
     """Configuration extraction et processing audio"""
-    
+
+    model_config = {"extra": "ignore"}
+
     # yt-dlp settings
     ytdlp_format: str = Field("bestaudio/best", env="YTDLP_FORMAT")
     ytdlp_extract_flat: bool = Field(False, env="YTDLP_EXTRACT_FLAT")
@@ -229,7 +253,9 @@ class AudioSettings(BaseSettings):
 
 class MonitoringSettings(BaseSettings):
     """Configuration monitoring et logging"""
-    
+
+    model_config = {"extra": "ignore"}
+
     # Logging
     log_level: str = Field("INFO", env="LOG_LEVEL")
     log_format: str = Field("json", env="LOG_FORMAT")  # json or text
@@ -250,7 +276,9 @@ class MonitoringSettings(BaseSettings):
 
 class AppSettings(BaseSettings):
     """Configuration principale de l'application"""
-    
+
+    model_config = {"extra": "ignore"}
+
     # App info
     app_name: str = "RobianAPI"
     app_version: str = "1.0.0"
@@ -284,7 +312,14 @@ class AppSettings(BaseSettings):
 
 class Settings(BaseSettings):
     """Configuration complète de l'application"""
-    
+
+    model_config = {
+        "extra": "ignore",
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "case_sensitive": False
+    }
+
     # Sous-configurations
     app: AppSettings = Field(default_factory=AppSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
@@ -293,11 +328,6 @@ class Settings(BaseSettings):
     paths: PathSettings = Field(default_factory=PathSettings)
     audio: AudioSettings = Field(default_factory=AudioSettings)
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
 
 
 # Instance globale des settings

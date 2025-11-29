@@ -45,3 +45,11 @@ docker-compose.override.yml
 # Backup files
 *.backup
 *.bak
+
+# Development artifacts (optional - uncomment to exclude)
+# archive/
+# exploration_results_*.json
+
+# Temporary test files
+test_*.tmp
+*.test.json
